@@ -251,7 +251,18 @@ async function startWhatsApp() {
         sock.ev.on("creds.update", saveCreds);
 
         sock.ev.on("connection.update", async (update) => {
-            const { connection, lastDisconnect} = update;
+            const { connection, lastDisconnect, qr } = update;
+            if (connection === "close" || !sock?.user) {
+                console.log(`[WhatsApp] Connection Status: ${connection || 'Initializing...'}`);
+            }
+
+            if (qr) {
+                console.log("==================================================");
+                console.log("📱 NEW QR CODE GENERATED - SCAN VIA HUGGING FACE LOGS:");
+                console.log("==================================================");
+                qrcode.generate(qr, { small: true });
+                console.log("==================================================");
+            }
             
             if (connection === "open") {
                 console.log("✅ WhatsApp Connected");
