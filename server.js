@@ -251,14 +251,7 @@ async function startWhatsApp() {
         sock.ev.on("creds.update", saveCreds);
 
         sock.ev.on("connection.update", async (update) => {
-            const { connection, lastDisconnect, qr } = update;
-            console.log("con", connection);
-            console.log("qr", qr);
-            console.log("------------");
-            if (qr) {
-                console.log("\n📱 Scan QR Code:\n");
-                qrcode.generate(qr, { small: true });
-            }
+            const { connection, lastDisconnect} = update;
             
             if (connection === "open") {
                 console.log("✅ WhatsApp Connected");
