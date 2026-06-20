@@ -3,10 +3,7 @@ title: Falsa
 emoji: 🏆
 colorFrom: gray
 colorTo: purple
-sdk: gradio
-sdk_version: 6.19.0
-python_version: '3.13'
-app_file: app.py
+sdk: docker
 pinned: false
 ---
 
