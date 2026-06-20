@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 7860
 
 # الأمر البرمجي لتشغيل السيرفر
-CMD ["node", "app.py"]
+CMD ["node", "server.js"]
