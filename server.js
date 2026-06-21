@@ -315,8 +315,7 @@ async function startWhatsApp() {
                 if (type !== "notify") return;
 
                 const msg = messages?.[0];
-                // if (!msg || msg.key.fromMe) return;
-                if (!msg.key.fromMe) return;
+                if (!msg || msg.key.fromMe) return;
                 if (msg.key.remoteJid.endsWith("@g.us")) return; //check what this mean
 
                 const remoteJid = msg.key.remoteJid;
