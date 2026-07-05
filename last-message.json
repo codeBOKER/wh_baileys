@@ -1,0 +1,58 @@
+{
+  "type": "notify",
+  "msg": {
+    "key": {
+      "remoteJid": "116896192024662@lid",
+      "remoteJidAlt": "967770026665@s.whatsapp.net",
+      "fromMe": false,
+      "id": "ACBE4404FA6D383BA46C45BC14F5998F",
+      "participant": "",
+      "addressingMode": "lid"
+    },
+    "messageTimestamp": 1782224182,
+    "pushName": "Aab",
+    "broadcast": false,
+    "message": {
+      "messageContextInfo": {
+        "deviceListMetadata": {
+          "senderTimestamp": "1781900306",
+          "recipientKeyHash": "+LuT2aB4yjG2/A==",
+          "recipientTimestamp": "1782104906"
+        },
+        "deviceListMetadataVersion": 2,
+        "messageSecret": "LJpXQVcC/jFr5WT3IZO90JImty10tdetQpGegzncoH0="
+      },
+      "botForwardedMessage": {
+        "message": {
+          "richResponseMessage": {
+            "messageType": "AI_RICH_RESPONSE_TYPE_STANDARD",
+            "submessages": [
+              {
+                "messageType": "AI_RICH_RESPONSE_TEXT",
+                "messageText": "تمام، اد با للمبتدئين:\n\n### **1. آلة حاسبة صغيرة**\n```python\na = int(input(\"الرقم الأول: \"))\nb = int(input(\"الرقم الثاني: \"))\nprint(\"الناتج:\", a + b)\n```\n\n### **2. يطبع الأرقام من 1 إلى 5**\n```python\nfor i in range(1, 6):\n    print(i)\n```\n\n### **3. يشوف الرقم زوجي ولا فردي**\n```python\nnum = int(input(\"اكتب رقم: \"))\nif num % 2 == 0:\n    print(\"زوجي\")\nelse:\n    print(\"فردي\")\n```\n\nانسخ أي واحد وجربه. \n\nتبغى كود يسوي شي معين؟"
+              }
+            ],
+            "unifiedResponse": {
+              "data": "eyJyZXNwb25zZV9pZCI6IjZiYmM0OWRkLTdjZWItNGE2ZC04NTNhLWUzOTcxNTllNWNjNSIsInNlY3Rpb25zIjpbeyJ2aWV3X21vZGVsIjp7InByaW1pdGl2ZSI6eyJ0ZXh0IjoiXHUwNjJhXHUwNjQ1XHUwNjI3XHUwNjQ1XHUwNjBjIFx1MDY0N1x1MDYzMFx1MDYyNyBcdTA2MjNcdTA2MjhcdTA2MzNcdTA2MzcgMyBcdTA2MjNcdTA2NDNcdTA2NDhcdTA2MjdcdTA2MmYgXHUwNjI4XHUwNjI3XHUwNjRhXHUwNjJiXHUwNjQ4XHUwNjQ2IFx1MDY0NFx1MDY0NFx1MDY0NVx1MDYyOFx1MDYyYVx1MDYyZlx1MDYyNlx1MDY0YVx1MDY0NjpcblxuIyMjICoxLiBcdTA2MjJcdTA2NDRcdTA2MjkgXHUwNjJkXHUwNjI3XHUwNjMzXHUwNjI4XHUwNjI5IFx1MDYzNVx1MDYzYVx1MDY0YVx1MDYzMVx1MDYyOSoiLCJfX3R5cGVuYW1lIjoiR2VuQUlNYXJrZG93blRleHRVWFByaW1pdGl2ZSJ9LCJfX3R5cGVuYW1lIjoiR2VuQUlTaW5nbGVMYXlvdXRWaWV3TW9kZWwifX0seyJ2aWV3X21vZGVsIjp7InByaW1pdGl2ZSI6eyJsYW5ndWFnZSI6InB5dGhvbiIsImNvZGVfYmxvY2tzIjpbeyJjb250ZW50IjoiYSA9IGludChpbnB1dCgiLCJ0eXBlIjoiREVGQVVMVCJ9LHsiY29udGVudCI6IlwiXHUwNjI3XHUwNjQ0XHUwNjMxXHUwNjQyXHUwNjQ1IFx1MDYyN1x1MDY0NFx1MDYyM1x1MDY0OFx1MDY0NDogXCIiLCJ0eXBlIjoiU1RSIn0seyJjb250ZW50IjoiKSlcbmIgPSBpbnQoaW5wdXQoIiwidHlwZSI6IkRFRkFVTFQifSx7ImNvbnRlbnQiOiJcIlx1MDYyN1x1MDY0NFx1MDYzMVx1MDY0Mlx1MDY0NSBcdTA2MjdcdTA2NDRcdTA2MmJcdTA2MjdcdTA2NDZcdTA2NGE6IFwiIiwidHlwZSI6IlNUUiJ9LHsiY29udGVudCI6IikpXG5wcmludCgiLCJ0eXBlIjoiREVGQVVMVCJ9LHsiY29udGVudCI6IlwiXHUwNjI3XHUwNjQ0XHUwNjQ2XHUwNjI3XHUwNjJhXHUwNjJjOlwiIiwidHlwZSI6IlNUUiJ9LHsiY29udGVudCI6IiwgYSArIGIpIiwidHlwZSI6IkRFRkFVTFQifV0sIl9fdHlwZW5hbWUiOiJHZW5BSUNvZGVVWFByaW1pdGl2ZSJ9LCJfX3R5cGVuYW1lIjoiR2VuQUlTaW5nbGVMYXlvdXRWaWV3TW9kZWwifX0seyJ2aWV3X21vZGVsIjp7InByaW1pdGl2ZSI6eyJ0ZXh0IjoiIyMjICoyLiBcdTA2NGFcdTA2MzdcdTA2MjhcdTA2MzkgXHUwNjI3XHUwNjQ0XHUwNjIzXHUwNjMxXHUwNjQyXHUwNjI3XHUwNjQ1IFx1MDY0NVx1MDY0NiAxIFx1MDYyNVx1MDY0NFx1MDY0OSA1KiIsIl9fdHlwZW5hbWUiOiJHZW5BSU1hcmtkb3duVGV4dFVYUHJpbWl0aXZlIn0sIl9fdHlwZW5hbWUiOiJHZW5BSVNpbmdsZUxheW91dFZpZXdNb2RlbCJ9fSx7InZpZXdfbW9kZWwiOnsicHJpbWl0aXZlIjp7Imxhbmd1YWdlIjoicHl0aG9uIiwiY29kZV9ibG9ja3MiOlt7ImNvbnRlbnQiOiJmb3IiLCJ0eXBlIjoiS0VZV09SRCJ9LHsiY29udGVudCI6IiBpICIsInR5cGUiOiJERUZBVUxUIn0seyJjb250ZW50IjoiaW4iLCJ0eXBlIjoiS0VZV09SRCJ9LHsiY29udGVudCI6IiByYW5nZSgiLCJ0eXBlIjoiREVGQVVMVCJ9LHsiY29udGVudCI6IjEiLCJ0eXBlIjoiTlVNQkVSIn0seyJjb250ZW50IjoiLCAiLCJ0eXBlIjoiREVGQVVMVCJ9LHsiY29udGVudCI6IjYiLCJ0eXBlIjoiTlVNQkVSIn0seyJjb250ZW50IjoiKTpcbiAgICBwcmludChpKSIsInR5cGUiOiJERUZBVUxUIn1dLCJfX3R5cGVuYW1lIjoiR2VuQUlDb2RlVVhQcmltaXRpdmUifSwiX190eXBlbmFtZSI6IkdlbkFJU2luZ2xlTGF5b3V0Vmlld01vZGVsIn19LHsidmlld19tb2RlbCI6eyJwcmltaXRpdmUiOnsidGV4dCI6IiMjIyAqMy4gXHUwNjRhXHUwNjM0XHUwNjQ4XHUwNjQxIFx1MDYyN1x1MDY0NFx1MDYzMVx1MDY0Mlx1MDY0NSBcdTA2MzJcdTA2NDhcdTA2MmNcdTA2NGEgXHUwNjQ4XHUwNjQ0XHUwNjI3IFx1MDY0MVx1MDYzMVx1MDYyZlx1MDY0YSoiLCJfX3R5cGVuYW1lIjoiR2VuQUlNYXJrZG93blRleHRVWFByaW1pdGl2ZSJ9LCJfX3R5cGVuYW1lIjoiR2VuQUlTaW5nbGVMYXlvdXRWaWV3TW9kZWwifX0seyJ2aWV3X21vZGVsIjp7InByaW1pdGl2ZSI6eyJsYW5ndWFnZSI6InB5dGhvbiIsImNvZGVfYmxvY2tzIjpbeyJjb250ZW50IjoibnVtID0gaW50KGlucHV0KCIsInR5cGUiOiJERUZBVUxUIn0seyJjb250ZW50IjoiXCJcdTA2MjdcdTA2NDNcdTA2MmFcdTA2MjggXHUwNjMxXHUwNjQyXHUwNjQ1OiBcIiIsInR5cGUiOiJTVFIifSx7ImNvbnRlbnQiOiIpKVxuIiwidHlwZSI6IkRFRkFVTFQifSx7ImNvbnRlbnQiOiJpZiIsInR5cGUiOiJLRVlXT1JEIn0seyJjb250ZW50IjoiIG51bSBcdTAwMjUgIiwidHlwZSI6IkRFRkFVTFQifSx7ImNvbnRlbnQiOiIyIiwidHlwZSI6Ik5VTUJFUiJ9LHsiY29udGVudCI6IiA9PSAiLCJ0eXBlIjoiREVGQVVMVCJ9LHsiY29udGVudCI6IjAiLCJ0eXBlIjoiTlVNQkVSIn0seyJjb250ZW50IjoiOlxuICAgIHByaW50KCIsInR5cGUiOiJERUZBVUxUIn0seyJjb250ZW50IjoiXCJcdTA2MzJcdTA2NDhcdTA2MmNcdTA2NGFcIiIsInR5cGUiOiJTVFIifSx7ImNvbnRlbnQiOiIpXG4iLCJ0eXBlIjoiREVGQVVMVCJ9LHsiY29udGVudCI6ImVsc2UiLCJ0eXBlIjoiS0VZV09SRCJ9LHsiY29udGVudCI6IjpcbiAgICBwcmludCgiLCJ0eXBlIjoiREVGQVVMVCJ9LHsiY29udGVudCI6IlwiXHUwNjQxXHUwNjMxXHUwNjJmXHUwNjRhXCIiLCJ0eXBlIjoiU1RSIn0seyJjb250ZW50IjoiKSIsInR5cGUiOiJERUZBVUxUIn1dLCJfX3R5cGVuYW1lIjoiR2VuQUlDb2RlVVhQcmltaXRpdmUifSwiX190eXBlbmFtZSI6IkdlbkFJU2luZ2xlTGF5b3V0Vmlld01vZGVsIn19LHsidmlld19tb2RlbCI6eyJwcmltaXRpdmUiOnsidGV4dCI6Ilx1MDYyN1x1MDY0Nlx1MDYzM1x1MDYyZSBcdTA2MjNcdTA2NGEgXHUwNjQ4XHUwNjI3XHUwNjJkXHUwNjJmIFx1MDY0OFx1MDYyY1x1MDYzMVx1MDYyOFx1MDY0Ny4gXG5cblx1MDYyYVx1MDYyOFx1MDYzYVx1MDY0OSBcdTA2NDNcdTA2NDhcdTA2MmYgXHUwNjRhXHUwNjMzXHUwNjQ4XHUwNjRhIFx1MDYzNFx1MDY0YSBcdTA2NDVcdTA2MzlcdTA2NGFcdTA2NDZcdTA2MWYiLCJfX3R5cGVuYW1lIjoiR2VuQUlNYXJrZG93blRleHRVWFByaW1pdGl2ZSJ9LCJfX3R5cGVuYW1lIjoiR2VuQUlTaW5nbGVMYXlvdXRWaWV3TW9kZWwifX1dfQ=="
+            },
+            "contextInfo": {
+              "forwardingScore": 1,
+              "isForwarded": true,
+              "expiration": 7776000,
+              "ephemeralSettingTimestamp": "1773581",
+              "disappearingMode": {
+                "initiator": "INITIATED_BY_ME",
+                "trigger": "ACCOUNT_SETTING",
+                "initiatedByMe": true
+              },
+              "forwardedAiBotMessageInfo": {
+                "botJid": "867051314767696@bot"
+              },
+              "forwardOrigin": "META_AI"
+            }
+          }
+        }
+      }
+    }
+  }
+}

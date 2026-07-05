@@ -27,9 +27,6 @@ const redis = new Redis(process.env.REDIS_URL);
 let sock = null;
 let isReconnecting = false;
 
-// 1. Initialize Baileys In-Memory Store
-//const store = makeInMemoryStore({});
-// 1. Initialize Native L1 In-Memory Cache (Sub-millisecond speed)
 const localChatCache = new Set();
 //
 let dbWriteQueue = Promise.resolve();
@@ -264,10 +261,14 @@ async function startWhatsApp() {
                 console.log("==================================================");
             }
             
+
+            
             if (connection === "open") {
                 console.log("✅ WhatsApp Connected");
                 isReconnecting = false;
             }
+        
+            
 
             if (connection === "close") {
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -316,21 +317,24 @@ async function startWhatsApp() {
 
                 const msg = messages?.[0];
                 if (!msg || msg.key.fromMe) return;
-                if (msg.key.remoteJid.endsWith("@g.us")) return; //check what this mean
+                if (msg.key.remoteJid.endsWith("@g.us")) return;
 
                 const remoteJid = msg.key.remoteJid;
                 const remoteJidAlt = msg.key.remoteJidAlt;
                 const senderNumber = remoteJid.split("@")[0];
 
+                const extendedText = msg.message?.extendedTextMessage;
                 const messageText =
                     msg.message?.conversation ||
-                    msg.message?.extendedTextMessage?.text;
+                    extendedText?.text;
 
                 if (!messageText) return;
 
+                const contextInfo = extendedText?.contextInfo;
+                const contextMessageId = contextInfo?.stanzaId || null;
+
                 await sock.sendPresenceUpdate("composing", remoteJid);
 
-                // Step 2: Build the Meta-Compatible Payload using remoteJid instead of remoteJidAlt
                 const payload = {
                     object: "whatsapp_business_account",
                     entry: [
@@ -354,15 +358,24 @@ async function startWhatsApp() {
                                             }
                                         ],
                                         messages: [
-                                            {
-                                                from: remoteJid,
-                                                id: msg.key.id,
-                                                timestamp: String(msg.messageTimestamp),
-                                                type: "text",
-                                                text: {
-                                                    body: messageText
+                                            (() => {
+                                                const msgEntry = {
+                                                    from: remoteJid,
+                                                    id: msg.key.id,
+                                                    timestamp: String(msg.messageTimestamp),
+                                                    type: "text",
+                                                    text: {
+                                                        body: messageText
+                                                    }
+                                                };
+                                                if (remoteJidAlt) {
+                                                    msgEntry.remote_jid_alt = remoteJidAlt;
                                                 }
-                                            }
+                                                if (contextMessageId) {
+                                                    msgEntry.context = { id: contextMessageId };
+                                                }
+                                                return msgEntry;
+                                            })()
                                         ]
                                     }
                                 }
@@ -383,11 +396,8 @@ async function startWhatsApp() {
                         "x-hub-signature-256": signature
                     }
                 });
+                
                 await sock.sendPresenceUpdate("paused", remoteJid);
-                // Step 3: Trigger typing indicator back down to the specific user chat
-                
-                
-                // Step 1: Process User Verification Flows
                 await verifyAndRegisterUser(remoteJid, remoteJidAlt, msg);
 
             } catch (err) {
@@ -402,46 +412,114 @@ async function startWhatsApp() {
 // 5. Inbound Messages Route via Outbound Platform Router
 app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
     try {
-        // Secure Endpoint via App System Bearer Access Token validation
+        // Validate Access Token
         const authHeader = req.headers.authorization;
         if (!authHeader || authHeader !== `Bearer ${ACCESS_TOKEN}`) {
             return res.status(401).json({
-                error: { message: "Unauthorized system authorization credentials token verification failed." }
+                error: {
+                    message:
+                        "Unauthorized system authorization credentials token verification failed."
+                }
             });
         }
 
-        const { messaging_product, to, type, text } = req.body;
+        const {
+            messaging_product,
+            to,
+            type,
+            text,
+            interactive
+        } = req.body;
 
-        if (messaging_product !== "whatsapp" || type !== "text" || !text?.body) {
+        if (messaging_product !== "whatsapp") {
             return res.status(400).json({
-                error: { message: "Invalid Meta payload format structure" }
+                error: {
+                    message: "Invalid messaging product"
+                }
+            });
+        }
+
+        if (!to) {
+            return res.status(400).json({
+                error: {
+                    message: "Recipient remoteJid or phone number is required"
+                }
             });
         }
 
         if (!sock) {
             return res.status(500).json({
-                error: { message: "WhatsApp backend connection engine down" }
+                error: {
+                    message: "WhatsApp backend connection engine down"
+                }
             });
         }
 
-        // Apply distributed execution rate-limiting delay prior to dispatching down into WhatsApp API pipeline
         await rateLimitOutgoingMessage();
 
-        const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
-        const result = await sock.sendMessage(jid, { text: text.body });
+        const jid = to.includes("@")
+            ? to
+            : `${to}@s.whatsapp.net`;
 
+        let result;
+        
+        switch (type) {
+            case "text": {
+                console.log("===text===");
+                if (!text?.body) {
+                    return res.status(400).json({
+                        error: {
+                            message: "Text body is required"
+                        }
+                    });
+                }
+
+                console.log(text)
+                result = await sock.sendMessage(jid, {
+                    text: text.body
+                });
+
+                break;
+            }
+
+            
+            default: {
+                return res.status(400).json({
+                    error: {
+                        message: `Unsupported message type: ${type}`
+                    }
+                });
+            }
+        }
+        
         return res.status(200).json({
             messaging_product: "whatsapp",
-            contacts: [{ input: to, wa_id: to }],
-            messages: [{ id: result.key.id }]
+            contacts: [
+                {
+                    input: to,
+                    wa_id: to
+                }
+            ],
+            messages: [
+                {
+                    id: result.key.id
+                }
+            ]
         });
     } catch (err) {
         console.error("Outbound Sender Error:", err);
+
         return res.status(500).json({
-            error: { message: err?.message || "Internal Engine Error Processing Messaging Event" }
+            error: {
+                message:
+                    err?.message ||
+                    "Internal Engine Error Processing Messaging Event"
+            }
         });
     }
 });
+
+
 
 app.get("/", (req, res) => {
     res.json({ status: "running", environment: "huggingface-spaces" });
