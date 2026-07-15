@@ -18,7 +18,9 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 7860;
 const SEND_WEBHOOK_URL = process.env.LLM_WEBHOOK_URL + "/whatsapp";
-const ACCESS_TOKEN = process.env.ACCESS_TOKEN; // Token used to verify inbound API requests
+const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
+const DAILY_MSG_LIMIT_PER_USER = parseInt(process.env.DAILY_MSG_LIMIT_PER_USER) || 500;
+const DAILY_MSG_LIMIT_GLOBAL = parseInt(process.env.DAILY_MSG_LIMIT_GLOBAL) || 500;
 
 // Initialize Database and Cache Connections
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -27,13 +29,105 @@ const redis = new Redis(process.env.REDIS_URL);
 let sock = null;
 let isReconnecting = false;
 
+// ─── ENHANCEMENT 5: Daily Message Limits ───
+// Prevents bans by capping per-user and global outbound messages per day
+const dailyUserCounts = new Map();   // { jid: count }
+let dailyGlobalCount = 0;
+let dailyResetDate = new Date().toDateString();
+
+function resetDailyCountsIfNeeded() {
+    const today = new Date().toDateString();
+    if (today !== dailyResetDate) {
+        dailyUserCounts.clear();
+        dailyGlobalCount = 0;
+        dailyResetDate = today;
+        console.log("[Limits] Daily message counters reset");
+    }
+}
+
+function checkDailyLimits(jid) {
+    resetDailyCountsIfNeeded();
+
+    const userCount = dailyUserCounts.get(jid) || 0;
+    if (userCount >= DAILY_MSG_LIMIT_PER_USER) {
+        console.log(`[Limits] BLOCKED: ${jid} hit daily per-user limit (${userCount}/${DAILY_MSG_LIMIT_PER_USER})`);
+        return false;
+    }
+
+    if (dailyGlobalCount >= DAILY_MSG_LIMIT_GLOBAL) {
+        console.log(`[Limits] BLOCKED: Global daily limit reached (${dailyGlobalCount}/${DAILY_MSG_LIMIT_GLOBAL})`);
+        return false;
+    }
+
+    return true;
+}
+
+function recordSentMessage(jid) {
+    resetDailyCountsIfNeeded();
+    dailyUserCounts.set(jid, (dailyUserCounts.get(jid) || 0) + 1);
+    dailyGlobalCount++;
+}
+
+// ─── ENHANCEMENT 1: In-Memory LRU Cache for Auth Keys ───
+// Reduces Supabase queries by caching keys locally with TTL
+const keyCache = new Map();
+const KEY_CACHE_TTL = 3600000; // 1 hour TTL
+const KEY_CACHE_MAX = 10000;   // Max entries before eviction
+
+function getCachedKey(fullId) {
+    const entry = keyCache.get(fullId);
+    if (!entry) return undefined;
+    if (Date.now() - entry.ts > KEY_CACHE_TTL) {
+        keyCache.delete(fullId);
+        return undefined;
+    }
+    return entry.value;
+}
+
+function setCachedKey(fullId, value) {
+    if (keyCache.size >= KEY_CACHE_MAX) {
+        // Evict oldest entry
+        const firstKey = keyCache.keys().next().value;
+        keyCache.delete(firstKey);
+    }
+    keyCache.set(fullId, { value, ts: Date.now() });
+}
+
+// ─── ENHANCEMENT 2: Pre-loaded User Cache ───
+// Bulk-loads all known users on startup to avoid per-message DB lookups
 const localChatCache = new Set();
-//
+let usersPreloaded = false;
+
+async function preloadUsers() {
+    try {
+        const { data, error } = await supabase
+            .from("users")
+            .select("remote_jid");
+
+        if (error) {
+            console.error("[Preload] Failed to load users:", error.message);
+            return;
+        }
+
+        if (data) {
+            for (const user of data) {
+                localChatCache.add(user.remote_jid);
+                await redis.set(`user:${user.remote_jid}`, "true", "EX", 86400);
+            }
+        }
+        usersPreloaded = true;
+        console.log(`[Preload] Loaded ${localChatCache.size} users into memory cache`);
+    } catch (err) {
+        console.error("[Preload] Error:", err.message);
+    }
+}
+
+// ─── ENHANCEMENT 3: Non-Blocking Write Queue ───
+// Fire-and-forget for key writes, only block when critical
 let dbWriteQueue = Promise.resolve();
-// 2. Custom Supabase Authentication State Engine (Replaces useMultiFileAuthState)
-// Fully Optimized, Bulk-Operational Supabase Auth State Engine
+
+// Custom Supabase Authentication State Engine
 async function useSupabaseAuthState() {
-    // Kept for initial creds reading/writing
     const writeData = async (data, id) => {
         try {
             const jsonStr = JSON.stringify(data, BufferJSON.replacer);
@@ -74,46 +168,60 @@ async function useSupabaseAuthState() {
         state: {
             creds,
             keys: {
-                // OPTIMIZED: Uses 1 bulk query instead of N concurrent HTTP requests
                 get: async (type, ids) => {
                     const data = {};
                     if (!ids || ids.length === 0) return data;
 
-                    const fullIds = ids.map(id => `${type}-${id}`);
-                    try {
-                        const { data: dbRows, error } = await supabase
-                            .from("whatsapp_auth")
-                            .select("id, data")
-                            .in("id", fullIds);
-
-                        if (error) {
-                            console.error(`[DB Bulk Read Error - ${type}]:`, error.message);
-                            return data;
+                    // ─── ENHANCEMENT 1b: Check cache first ───
+                    const uncachedIds = [];
+                    for (const id of ids) {
+                        const fullId = `${type}-${id}`;
+                        const cached = getCachedKey(fullId);
+                        if (cached !== undefined) {
+                            data[id] = cached;
+                        } else {
+                            uncachedIds.push(id);
                         }
-
-                        // Map database results into a quick lookup dictionary
-                        const rowMap = new Map(dbRows?.map(row => [row.id, row.data]) || []);
-
-                        for (const id of ids) {
-                            const key = `${type}-${id}`;
-                            let value = rowMap.get(key);
-
-                            if (value) {
-                                // Revive Buffer structures safely
-                                value = JSON.parse(JSON.stringify(value), BufferJSON.reviver);
-                                if (type === "app-state-sync-key") {
-                                    const { proto } = require("@whiskeysockets/baileys");
-                                    value = proto.Message.AppStateSyncKeyData.fromObject(value);
-                                }
-                            }
-                            data[id] = value || undefined;
-                        }
-                    } catch (err) {
-                        console.error(`Bulk read mapping crash for ${type}:`, err);
                     }
+
+                    // Only query Supabase for uncached keys
+                    if (uncachedIds.length > 0) {
+                        const fullIds = uncachedIds.map(id => `${type}-${id}`);
+                        try {
+                            const { data: dbRows, error } = await supabase
+                                .from("whatsapp_auth")
+                                .select("id, data")
+                                .in("id", fullIds);
+
+                            if (error) {
+                                console.error(`[DB Bulk Read Error - ${type}]:`, error.message);
+                                return data;
+                            }
+
+                            const rowMap = new Map(dbRows?.map(row => [row.id, row.data]) || []);
+
+                            for (const id of uncachedIds) {
+                                const key = `${type}-${id}`;
+                                let value = rowMap.get(key);
+
+                                if (value) {
+                                    value = JSON.parse(JSON.stringify(value), BufferJSON.reviver);
+                                    if (type === "app-state-sync-key") {
+                                        const { proto } = require("@whiskeysockets/baileys");
+                                        value = proto.Message.AppStateSyncKeyData.fromObject(value);
+                                    }
+                                    // ─── Cache the fetched key ───
+                                    setCachedKey(key, value);
+                                }
+                                data[id] = value || undefined;
+                            }
+                        } catch (err) {
+                            console.error(`Bulk read mapping crash for ${type}:`, err);
+                        }
+                    }
+
                     return data;
                 },
-                // OPTIMIZED: Combines multiple individual inserts/deletes into single bulk operations
                 set: async (data) => {
                     const upserts = [];
                     const deletes = [];
@@ -130,13 +238,17 @@ async function useSupabaseAuthState() {
                                     data: JSON.parse(jsonStr), 
                                     updated_at: new Date() 
                                 });
+                                // ─── Update local cache immediately ───
+                                setCachedKey(key, value);
                             } else {
                                 deletes.push(key);
+                                keyCache.delete(key);
                             }
                         }
                     }
 
-                    // Chain this operation to the end of the global write queue
+                    // ─── ENHANCEMENT 3b: Fire-and-forget for non-critical writes ───
+                    // Don't block the caller - write in background
                     dbWriteQueue = dbWriteQueue.then(async () => {
                         try {
                             if (upserts.length > 0) {
@@ -152,8 +264,7 @@ async function useSupabaseAuthState() {
                         }
                     });
 
-                    // Wait for this specific task in the queue to finish before resolving keys.set
-                    await dbWriteQueue;
+                    // ─── Don't await - fire and forget ───
                 }
             }
         },
@@ -170,48 +281,53 @@ function generateSignature(body, appSecret) {
     return `sha256=${digest}`;
 }
 
-// 3. User Resolution Layer (Cascading Store -> Redis Cache -> Supabase)
+// ─── ENHANCEMENT 4: Async User Registration (Non-Blocking) ───
+// Runs in background, doesn't block message forwarding
 async function verifyAndRegisterUser(remoteJid, remoteJidAlt, msg) {
-    // Step 1: Check Native L1 Local Memory Store
-    if (localChatCache.has(remoteJid)) return;
+    try {
+        // Step 1: Check local cache (instant)
+        if (localChatCache.has(remoteJid)) return;
 
-    // Step 2: Check Fast Redis Cache Layer
-    const cacheKey = `user:${remoteJid}`;
-    const cachedUser = await redis.get(cacheKey);
-    if (cachedUser) {
-        localChatCache.add(remoteJid); // Hydrate L1 cache
-        return;
-    }
+        // Step 2: Check Redis cache
+        const cacheKey = `user:${remoteJid}`;
+        const cachedUser = await redis.get(cacheKey);
+        if (cachedUser) {
+            localChatCache.add(remoteJid);
+            return;
+        }
 
-    // Step 3: Fall back to Supabase Core Storage
-    const { data: dbUser, error } = await supabase
-        .from("users")
-        .select("remote_jid")
-        .eq("remote_jid", remoteJid)
-        .single();
+        // Step 3: Check Supabase
+        const { data: dbUser, error } = await supabase
+            .from("users")
+            .select("remote_jid")
+            .eq("remote_jid", remoteJid)
+            .single();
 
-    if (dbUser) {
-        // Hydrate both cache layers
-        await redis.set(cacheKey, "true", "EX", 86400); // 24-Hour Expiration Window
+        if (dbUser) {
+            await redis.set(cacheKey, "true", "EX", 86400);
+            localChatCache.add(remoteJid);
+            return;
+        }
+
+        // Step 4: Register new user
+        await supabase.from("users").insert({
+            remote_jid: remoteJid,
+            remote_jid_alt: remoteJidAlt || null
+        });
+        
+        await redis.set(cacheKey, "true", "EX", 86400);
         localChatCache.add(remoteJid);
-        return;
+        console.log(`Registered new user: ${remoteJid}`);
+    } catch (err) {
+        // ─── Don't let user registration errors crash message handling ───
+        console.error("User registration error:", err.message);
     }
-
-    // Completely New User Detected -> Save to Supabase and Cache Instantly
-    await supabase.from("users").insert({
-        remote_jid: remoteJid,
-        remote_jid_alt: remoteJidAlt || null
-    });
-    
-    await redis.set(cacheKey, "true", "EX", 86400);
-    localChatCache.add(remoteJid);
-    console.log(`✨ Registered absolute new user: ${remoteJid}`);
 }
 
-// 4. Redis Lua-script Atomic Rate Limiting (Ensures max 2 messages per second)
+// Redis Lua-script Atomic Rate Limiting (2 messages per second)
 async function rateLimitOutgoingMessage() {
     const now = Date.now();
-    const minIntervalMs = 500; // 500ms spacing = 2 messages per second max
+    const minIntervalMs = 500;
 
     const delay = await redis.eval(
         `local now = tonumber(ARGV[1])
@@ -240,10 +356,9 @@ async function startWhatsApp() {
         sock = makeWASocket({
             auth: state,
             logger: pino({ level: "silent" }),
-            markOnlineOnConnect: true,
+            markOnlineOnConnect: false,
             syncFullHistory: false
         });
-
 
         sock.ev.on("creds.update", saveCreds);
 
@@ -260,21 +375,20 @@ async function startWhatsApp() {
                 qrcode.generate(qr, { small: true });
                 console.log("==================================================");
             }
-            
 
-            
             if (connection === "open") {
                 console.log("✅ WhatsApp Connected");
                 isReconnecting = false;
+                // ─── Pre-load users on successful connection ───
+                if (!usersPreloaded) {
+                    await preloadUsers();
+                }
             }
-        
-            
 
             if (connection === "close") {
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 console.log(`❌ Connection closed. Status: ${statusCode}`);
 
-                // 401: Unauthorized, 405: Not Allowed/Bad Session, 403: Forbidden
                 const shouldLogout =
                     statusCode === 401 ||
                     statusCode === 405 ||
@@ -284,7 +398,6 @@ async function startWhatsApp() {
                 if (shouldLogout) {
                     console.log("🧹 Session corrupted. Nuking Database Session Data...");
                     
-                    // Explicitly clear the table and catch errors
                     const { error } = await supabase.from("whatsapp_auth").delete().neq("id", "keep_alive_placeholder");
                     if (error) {
                         console.error("🚨 CRITICAL: Failed to wipe DB! Check Supabase RLS:", error.message);
@@ -292,7 +405,6 @@ async function startWhatsApp() {
                         console.log("✅ Database wiped successfully.");
                     }
 
-                    // Destroy the current socket completely
                     sock.end(undefined);
                     sock = null;
                     
@@ -313,28 +425,48 @@ async function startWhatsApp() {
 
         sock.ev.on("messages.upsert", async ({ messages, type }) => {
             try {
-                if (type !== "notify") return;
+                console.log(`[MSG] Received ${messages?.length || 0} messages, type: ${type}`);
+
+                if (type !== "notify" && type !== "append") {
+                    console.log(`[MSG] Skipped: unrecognized type "${type}"`);
+                    return;
+                }
 
                 const msg = messages?.[0];
-                if (!msg || msg.key.fromMe) return;
-                if (msg.key.remoteJid.endsWith("@g.us")) return;
+                if (!msg || msg.key.fromMe) {
+                    console.log("[MSG] Skipped: no message object");
+                    return;
+                }
+
+
+                if (msg.key.remoteJid === "status@broadcast") {
+                    console.log("[MSG] Skipped: status update");
+                    return;
+                }
+
+                if (msg.key.remoteJid.endsWith("@g.us")) {
+                    console.log("[MSG] Skipped: group message");
+                    return;
+                }
 
                 const remoteJid = msg.key.remoteJid;
                 const remoteJidAlt = msg.key.remoteJidAlt;
-                const senderNumber = remoteJid.split("@")[0];
 
                 const extendedText = msg.message?.extendedTextMessage;
                 const messageText =
                     msg.message?.conversation ||
-                    extendedText?.text;
+                    extendedText?.text ||
+                    msg.message?.extendedTextMessage?.text;
 
-                if (!messageText) return;
+                if (!messageText) {
+                    console.log("[MSG] Skipped: no text content. Message keys:", Object.keys(msg.message || {}));
+                    return;
+                }
 
                 const contextInfo = extendedText?.contextInfo;
                 const contextMessageId = contextInfo?.stanzaId || null;
 
-                await sock.sendPresenceUpdate("composing", remoteJid);
-
+                // ─── ENHANCEMENT 4b: Fire presence update + webhook in parallel ───
                 const payload = {
                     object: "whatsapp_business_account",
                     entry: [
@@ -384,24 +516,34 @@ async function startWhatsApp() {
                     ]
                 };
 
-                console.log(`📩 Forwarding [${remoteJid}]: ${messageText}`);
                 const body = JSON.stringify(payload);
-
                 const signature = generateSignature(body, process.env.WHATSAPP_APP_SECRET);
                 
-                // Dispatch payload upstream to LLM handler
-                await axios.post(SEND_WEBHOOK_URL, body, {
-                    headers: {
-                        "Content-Type": "application/json",
-                        "x-hub-signature-256": signature
-                    }
-                });
+                console.log(`📤 Forwarding [${remoteJid}]: ${messageText}`);
+                console.log(`📤 Webhook URL: ${SEND_WEBHOOK_URL}`);
+
+                await sock.sendPresenceUpdate("composing", remoteJid);
+
+                try {
+                    const webhookRes = await axios.post(SEND_WEBHOOK_URL, body, {
+                        headers: {
+                            "Content-Type": "application/json",
+                            "x-hub-signature-256": signature
+                        },
+                        timeout: 10000
+                    });
+                    console.log(`✅ Webhook sent OK: ${webhookRes.status}`);
+                } catch (webhookErr) {
+                    console.error(`❌ Webhook FAILED: ${webhookErr?.response?.status || 'no response'} - ${webhookErr?.response?.data ? JSON.stringify(webhookErr.response.data) : webhookErr?.message}`);
+                }
                 
                 await sock.sendPresenceUpdate("paused", remoteJid);
-                await verifyAndRegisterUser(remoteJid, remoteJidAlt, msg);
+                
+                // ─── User registration runs in background (non-blocking) ───
+                verifyAndRegisterUser(remoteJid, remoteJidAlt, msg).catch(() => {});
 
             } catch (err) {
-                console.error("Webhook Forwarding Error:", err?.response?.data || err);
+                console.error("Message handler error:", err?.response?.data || err?.message || err);
             }
         });
     } catch (err) {
@@ -409,16 +551,14 @@ async function startWhatsApp() {
     }
 }
 
-// 5. Inbound Messages Route via Outbound Platform Router
+// Inbound Messages Route via Outbound Platform Router
 app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
     try {
-        // Validate Access Token
         const authHeader = req.headers.authorization;
         if (!authHeader || authHeader !== `Bearer ${ACCESS_TOKEN}`) {
             return res.status(401).json({
                 error: {
-                    message:
-                        "Unauthorized system authorization credentials token verification failed."
+                    message: "Unauthorized system authorization credentials token verification failed."
                 }
             });
         }
@@ -455,17 +595,32 @@ app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
             });
         }
 
-        await rateLimitOutgoingMessage();
-
         const jid = to.includes("@")
             ? to
             : `${to}@s.whatsapp.net`;
+
+        if (jid.endsWith("@g.us")) {
+            return res.status(400).json({
+                error: {
+                    message: "Sending messages to groups is not supported"
+                }
+            });
+        }
+
+        if (!checkDailyLimits(jid)) {
+            return res.status(429).json({
+                error: {
+                    message: "Daily message limit reached. Try again tomorrow."
+                }
+            });
+        }
+
+        await rateLimitOutgoingMessage();
 
         let result;
         
         switch (type) {
             case "text": {
-                console.log("===text===");
                 if (!text?.body) {
                     return res.status(400).json({
                         error: {
@@ -474,15 +629,22 @@ app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
                     });
                 }
 
-                console.log(text)
+                const charCount = text.body.length;
+                const typingDuration = Math.min(4000, Math.max(1000, charCount * 40));
+
+                await sock.sendPresenceUpdate("available", jid);
+                await sock.sendPresenceUpdate("composing", jid);
+                await new Promise(resolve => setTimeout(resolve, typingDuration));
+
                 result = await sock.sendMessage(jid, {
                     text: text.body
                 });
 
+                recordSentMessage(jid);
+
                 break;
             }
 
-            
             default: {
                 return res.status(400).json({
                     error: {
@@ -518,8 +680,6 @@ app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
         });
     }
 });
-
-
 
 app.get("/", (req, res) => {
     res.json({ status: "running", environment: "huggingface-spaces" });
