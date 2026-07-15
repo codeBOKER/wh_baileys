@@ -68,6 +68,30 @@ function recordSentMessage(jid) {
     dailyGlobalCount++;
 }
 
+// ─── ENHANCEMENT: Group Message Deduplication ───
+// Discards duplicate messages sent by the same user to multiple groups within 30 minutes
+const dedupCache = new Map();
+const DEDUP_TTL = 30 * 60 * 1000; // 30 minutes
+
+function isDuplicateGroupMessage(participant, messageText) {
+    const key = `${participant}:${messageText}`;
+    if (dedupCache.has(key)) {
+        return true;
+    }
+    dedupCache.set(key, Date.now());
+    return false;
+}
+
+// Cleanup expired entries every 5 minutes
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, timestamp] of dedupCache) {
+        if (now - timestamp > DEDUP_TTL) {
+            dedupCache.delete(key);
+        }
+    }
+}, 5 * 60 * 1000);
+
 // ─── ENHANCEMENT 1: In-Memory LRU Cache for Auth Keys ───
 // Reduces Supabase queries by caching keys locally with TTL
 const keyCache = new Map();
@@ -444,11 +468,6 @@ async function startWhatsApp() {
                     return;
                 }
 
-                if (msg.key.remoteJid.endsWith("@g.us")) {
-                    console.log("[MSG] Skipped: group message");
-                    return;
-                }
-
                 const remoteJid = msg.key.remoteJid;
                 const remoteJidAlt = msg.key.remoteJidAlt;
 
@@ -465,6 +484,15 @@ async function startWhatsApp() {
 
                 const contextInfo = extendedText?.contextInfo;
                 const contextMessageId = contextInfo?.stanzaId || null;
+
+                // ─── ENHANCEMENT: Group Message Deduplication ───
+                if (remoteJid.endsWith("@g.us")) {
+                    const participant = msg.key.participant || remoteJid;
+                    if (isDuplicateGroupMessage(participant, messageText)) {
+                        console.log(`[MSG] Skipped: duplicate group message from ${participant} in ${remoteJid}`);
+                        return;
+                    }
+                }
 
                 // ─── ENHANCEMENT 4b: Fire presence update + webhook in parallel ───
                 const payload = {
@@ -540,7 +568,9 @@ async function startWhatsApp() {
                 await sock.sendPresenceUpdate("paused", remoteJid);
                 
                 // ─── User registration runs in background (non-blocking) ───
-                verifyAndRegisterUser(remoteJid, remoteJidAlt, msg).catch(() => {});
+                if (!remoteJid.endsWith("@g.us")) {
+                    verifyAndRegisterUser(remoteJid, remoteJidAlt, msg).catch(() => {});
+                }
 
             } catch (err) {
                 console.error("Message handler error:", err?.response?.data || err?.message || err);
@@ -599,14 +629,6 @@ app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
             ? to
             : `${to}@s.whatsapp.net`;
 
-        if (jid.endsWith("@g.us")) {
-            return res.status(400).json({
-                error: {
-                    message: "Sending messages to groups is not supported"
-                }
-            });
-        }
-
         if (!checkDailyLimits(jid)) {
             return res.status(429).json({
                 error: {
@@ -632,9 +654,11 @@ app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
                 const charCount = text.body.length;
                 const typingDuration = Math.min(4000, Math.max(1000, charCount * 40));
 
-                await sock.sendPresenceUpdate("available", jid);
-                await sock.sendPresenceUpdate("composing", jid);
-                await new Promise(resolve => setTimeout(resolve, typingDuration));
+                if (!jid.endsWith("@g.us")) {
+                    await sock.sendPresenceUpdate("available", jid);
+                    await sock.sendPresenceUpdate("composing", jid);
+                    await new Promise(resolve => setTimeout(resolve, typingDuration));
+                }
 
                 result = await sock.sendMessage(jid, {
                     text: text.body
