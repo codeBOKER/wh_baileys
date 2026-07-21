@@ -550,7 +550,9 @@ async function startWhatsApp() {
                 console.log(`📤 Forwarding [${remoteJid}]: ${messageText}`);
                 console.log(`📤 Webhook URL: ${SEND_WEBHOOK_URL}`);
 
-                await sock.sendPresenceUpdate("composing", remoteJid);
+                if (!remoteJid.endsWith("@g.us")) {
+                    await sock.sendPresenceUpdate("composing", remoteJid);
+                }
 
                 try {
                     const webhookRes = await axios.post(SEND_WEBHOOK_URL, body, {
@@ -565,7 +567,9 @@ async function startWhatsApp() {
                     console.error(`❌ Webhook FAILED: ${webhookErr?.response?.status || 'no response'} - ${webhookErr?.response?.data ? JSON.stringify(webhookErr.response.data) : webhookErr?.message}`);
                 }
                 
-                await sock.sendPresenceUpdate("paused", remoteJid);
+                if (!remoteJid.endsWith("@g.us")) {
+                    await sock.sendPresenceUpdate("paused", remoteJid);
+                }
                 
                 // ─── User registration runs in background (non-blocking) ───
                 if (!remoteJid.endsWith("@g.us")) {
