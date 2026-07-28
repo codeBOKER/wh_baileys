@@ -21,6 +21,8 @@ const SEND_WEBHOOK_URL = process.env.LLM_WEBHOOK_URL + "/whatsapp";
 const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 const DAILY_MSG_LIMIT_PER_USER = parseInt(process.env.DAILY_MSG_LIMIT_PER_USER) || 500;
 const DAILY_MSG_LIMIT_GLOBAL = parseInt(process.env.DAILY_MSG_LIMIT_GLOBAL) || 500;
+const MODE = process.env.MODE || "prod";
+const AUTH_TABLE = `whatsapp_auth_${MODE}`;
 
 // Initialize Database and Cache Connections
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -136,7 +138,7 @@ async function preloadUsers() {
         if (data) {
             for (const user of data) {
                 localChatCache.add(user.remote_jid);
-                await redis.set(`user:${user.remote_jid}`, "true", "EX", 86400);
+                await redis.set(`${MODE}:user:${user.remote_jid}`, "true", "EX", 86400);
             }
         }
         usersPreloaded = true;
@@ -156,7 +158,7 @@ async function useSupabaseAuthState() {
         try {
             const jsonStr = JSON.stringify(data, BufferJSON.replacer);
             const { error } = await supabase
-                .from("whatsapp_auth")
+                .from(AUTH_TABLE)
                 .upsert({ id, data: JSON.parse(jsonStr), updated_at: new Date() });
             if (error) console.error(`[DB Write Error - ${id}]:`, error.message);
         } catch (error) {
@@ -167,7 +169,7 @@ async function useSupabaseAuthState() {
     const readData = async (id) => {
         try {
             const { data, error } = await supabase
-                .from("whatsapp_auth")
+                .from(AUTH_TABLE)
                 .select("data")
                 .eq("id", id)
                 .maybeSingle();
@@ -213,7 +215,7 @@ async function useSupabaseAuthState() {
                         const fullIds = uncachedIds.map(id => `${type}-${id}`);
                         try {
                             const { data: dbRows, error } = await supabase
-                                .from("whatsapp_auth")
+                                .from(AUTH_TABLE)
                                 .select("id, data")
                                 .in("id", fullIds);
 
@@ -276,11 +278,11 @@ async function useSupabaseAuthState() {
                     dbWriteQueue = dbWriteQueue.then(async () => {
                         try {
                             if (upserts.length > 0) {
-                                const { error } = await supabase.from("whatsapp_auth").upsert(upserts);
+                                const { error } = await supabase.from(AUTH_TABLE).upsert(upserts);
                                 if (error) console.error("[DB Bulk Write Error]:", error.message);
                             }
                             if (deletes.length > 0) {
-                                const { error } = await supabase.from("whatsapp_auth").delete().in("id", deletes);
+                                const { error } = await supabase.from(AUTH_TABLE).delete().in("id", deletes);
                                 if (error) console.error("[DB Bulk Delete Error]:", error.message);
                             }
                         } catch (err) {
@@ -313,7 +315,7 @@ async function verifyAndRegisterUser(remoteJid, remoteJidAlt, msg) {
         if (localChatCache.has(remoteJid)) return;
 
         // Step 2: Check Redis cache
-        const cacheKey = `user:${remoteJid}`;
+        const cacheKey = `${MODE}:user:${remoteJid}`;
         const cachedUser = await redis.get(cacheKey);
         if (cachedUser) {
             localChatCache.add(remoteJid);
@@ -328,7 +330,7 @@ async function verifyAndRegisterUser(remoteJid, remoteJidAlt, msg) {
             .single();
 
         if (dbUser) {
-            await redis.set(cacheKey, "true", "EX", 86400);
+            await redis.set(`${MODE}:user:${remoteJid}`, "true", "EX", 86400);
             localChatCache.add(remoteJid);
             return;
         }
@@ -339,7 +341,7 @@ async function verifyAndRegisterUser(remoteJid, remoteJidAlt, msg) {
             remote_jid_alt: remoteJidAlt || null
         });
         
-        await redis.set(cacheKey, "true", "EX", 86400);
+        await redis.set(`${MODE}:user:${remoteJid}`, "true", "EX", 86400);
         localChatCache.add(remoteJid);
         console.log(`Registered new user: ${remoteJid}`);
     } catch (err) {
@@ -353,19 +355,22 @@ async function rateLimitOutgoingMessage() {
     const now = Date.now();
     const minIntervalMs = 500;
 
+    const rateLimitKey = `${MODE}:whatsapp_last_sent_timestamp`;
     const delay = await redis.eval(
         `local now = tonumber(ARGV[1])
          local interval = tonumber(ARGV[2])
-         local last = tonumber(redis.call('get', 'whatsapp_last_sent_timestamp') or '0')
+         local key = ARGV[3]
+         local last = tonumber(redis.call('get', key) or '0')
          local target = last + interval
          if target < now then
              target = now
          end
-         redis.call('set', 'whatsapp_last_sent_timestamp', target)
+         redis.call('set', key, target)
          return target - now`,
         0,
         now,
-        minIntervalMs
+        minIntervalMs,
+        rateLimitKey
     );
 
     if (delay > 0) {
@@ -395,6 +400,7 @@ async function startWhatsApp() {
             if (qr) {
                 console.log("==================================================");
                 console.log("📱 NEW QR CODE GENERATED - SCAN VIA HUGGING FACE LOGS:");
+                console.log(`   [MODE: ${MODE}]`);
                 console.log("==================================================");
                 qrcode.generate(qr, { small: true });
                 console.log("==================================================");
@@ -422,7 +428,7 @@ async function startWhatsApp() {
                 if (shouldLogout) {
                     console.log("🧹 Session corrupted. Nuking Database Session Data...");
                     
-                    const { error } = await supabase.from("whatsapp_auth").delete().neq("id", "keep_alive_placeholder");
+                    const { error } = await supabase.from(AUTH_TABLE).delete().neq("id", "keep_alive_placeholder");
                     if (error) {
                         console.error("🚨 CRITICAL: Failed to wipe DB! Check Supabase RLS:", error.message);
                     } else {
@@ -710,10 +716,10 @@ app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
 });
 
 app.get("/", (req, res) => {
-    res.json({ status: "running", environment: "huggingface-spaces" });
+    res.json({ status: "running", mode: MODE, environment: "huggingface-spaces" });
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Server safely deployed and processing requests on port ${PORT}`);
+    console.log(`🚀 Server safely deployed and processing requests on port ${PORT} [MODE: ${MODE}]`);
     startWhatsApp();
 });
