@@ -3,6 +3,7 @@ const {
     default: makeWASocket,
     DisconnectReason,
     BufferJSON,
+    fetchLatestBaileysVersion,
 } = require("@whiskeysockets/baileys");
 
 const express = require("express");
@@ -381,9 +382,12 @@ async function rateLimitOutgoingMessage() {
 async function startWhatsApp() {
     try {
         const { state, saveCreds } = await useSupabaseAuthState();
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        console.log(`[WhatsApp] Using WA version ${version.join(".")} (latest: ${isLatest})`);
 
         sock = makeWASocket({
             auth: state,
+            version,
             logger: pino({ level: "silent" }),
             markOnlineOnConnect: false,
             syncFullHistory: false
@@ -419,14 +423,15 @@ async function startWhatsApp() {
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 console.log(`❌ Connection closed. Status: ${statusCode}`);
 
+                // 401/403/loggedOut = real auth death. 405 = WA rejected client version/platform
+                // (not session corruption) — wiping on 405 causes an infinite reconnect loop.
                 const shouldLogout =
                     statusCode === 401 ||
-                    statusCode === 405 ||
                     statusCode === 403 ||
                     statusCode === DisconnectReason.loggedOut;
 
                 if (shouldLogout) {
-                    console.log("🧹 Session corrupted. Nuking Database Session Data...");
+                    console.log("🧹 Session invalid. Nuking Database Session Data...");
                     
                     const { error } = await supabase.from(AUTH_TABLE).delete().neq("id", "keep_alive_placeholder");
                     if (error) {
@@ -442,13 +447,17 @@ async function startWhatsApp() {
                     return;
                 }
 
+                if (statusCode === 405) {
+                    console.log("⚠️ Status 405: WhatsApp rejected client (outdated version/platform). Reconnecting without wiping session...");
+                }
+
                 if (!isReconnecting) {
                     isReconnecting = true;
                     console.log("🔄 Reconnecting in 5 seconds...");
                     setTimeout(() => {
                         isReconnecting = false;
                         startWhatsApp();
-                    }, 3000);
+                    }, 5000);
                 }
             }
         });
