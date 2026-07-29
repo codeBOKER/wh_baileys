@@ -23,7 +23,12 @@ const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 const DAILY_MSG_LIMIT_PER_USER = parseInt(process.env.DAILY_MSG_LIMIT_PER_USER) || 500;
 const DAILY_MSG_LIMIT_GLOBAL = parseInt(process.env.DAILY_MSG_LIMIT_GLOBAL) || 500;
 const MODE = process.env.MODE || "prod";
+const IS_PROD = MODE === "prod";
 const AUTH_TABLE = `whatsapp_auth_${MODE}`;
+
+// Verbose logs only outside prod; errors always print
+const log = (...args) => { if (!IS_PROD) console.log(...args); };
+const logWarn = (...args) => { if (!IS_PROD) console.warn(...args); };
 
 // Initialize Database and Cache Connections
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -44,7 +49,7 @@ function resetDailyCountsIfNeeded() {
         dailyUserCounts.clear();
         dailyGlobalCount = 0;
         dailyResetDate = today;
-        console.log("[Limits] Daily message counters reset");
+        log("[Limits] Daily message counters reset");
     }
 }
 
@@ -53,12 +58,12 @@ function checkDailyLimits(jid) {
 
     const userCount = dailyUserCounts.get(jid) || 0;
     if (userCount >= DAILY_MSG_LIMIT_PER_USER) {
-        console.log(`[Limits] BLOCKED: ${jid} hit daily per-user limit (${userCount}/${DAILY_MSG_LIMIT_PER_USER})`);
+        logWarn(`[Limits] BLOCKED: ${jid} hit daily per-user limit (${userCount}/${DAILY_MSG_LIMIT_PER_USER})`);
         return false;
     }
 
     if (dailyGlobalCount >= DAILY_MSG_LIMIT_GLOBAL) {
-        console.log(`[Limits] BLOCKED: Global daily limit reached (${dailyGlobalCount}/${DAILY_MSG_LIMIT_GLOBAL})`);
+        logWarn(`[Limits] BLOCKED: Global daily limit reached (${dailyGlobalCount}/${DAILY_MSG_LIMIT_GLOBAL})`);
         return false;
     }
 
@@ -143,7 +148,7 @@ async function preloadUsers() {
             }
         }
         usersPreloaded = true;
-        console.log(`[Preload] Loaded ${localChatCache.size} users into memory cache`);
+        log(`[Preload] Loaded ${localChatCache.size} users into memory cache`);
     } catch (err) {
         console.error("[Preload] Error:", err.message);
     }
@@ -344,7 +349,7 @@ async function verifyAndRegisterUser(remoteJid, remoteJidAlt, msg) {
         
         await redis.set(`${MODE}:user:${remoteJid}`, "true", "EX", 86400);
         localChatCache.add(remoteJid);
-        console.log(`Registered new user: ${remoteJid}`);
+        log(`Registered new user: ${remoteJid}`);
     } catch (err) {
         // ─── Don't let user registration errors crash message handling ───
         console.error("User registration error:", err.message);
@@ -383,7 +388,7 @@ async function startWhatsApp() {
     try {
         const { state, saveCreds } = await useSupabaseAuthState();
         const { version, isLatest } = await fetchLatestBaileysVersion();
-        console.log(`[WhatsApp] Using WA version ${version.join(".")} (latest: ${isLatest})`);
+        log(`[WhatsApp] Using WA version ${version.join(".")} (latest: ${isLatest})`);
 
         sock = makeWASocket({
             auth: state,
@@ -398,10 +403,11 @@ async function startWhatsApp() {
         sock.ev.on("connection.update", async (update) => {
             const { connection, lastDisconnect, qr } = update;
             if (connection === "close" || !sock?.user) {
-                console.log(`[WhatsApp] Connection Status: ${connection || 'Initializing...'}`);
+                log(`[WhatsApp] Connection Status: ${connection || 'Initializing...'}`);
             }
 
             if (qr) {
+                // QR must always print so pairing works in prod too
                 console.log("==================================================");
                 console.log("📱 NEW QR CODE GENERATED - SCAN VIA HUGGING FACE LOGS:");
                 console.log(`   [MODE: ${MODE}]`);
@@ -464,22 +470,22 @@ async function startWhatsApp() {
 
         sock.ev.on("messages.upsert", async ({ messages, type }) => {
             try {
-                console.log(`[MSG] Received ${messages?.length || 0} messages, type: ${type}`);
+                log(`[MSG] Received ${messages?.length || 0} messages, type: ${type}`);
 
                 if (type !== "notify" && type !== "append") {
-                    console.log(`[MSG] Skipped: unrecognized type "${type}"`);
+                    log(`[MSG] Skipped: unrecognized type "${type}"`);
                     return;
                 }
 
                 const msg = messages?.[0];
                 if (!msg || msg.key.fromMe) {
-                    console.log("[MSG] Skipped: no message object");
+                    log("[MSG] Skipped: no message object");
                     return;
                 }
 
 
                 if (msg.key.remoteJid === "status@broadcast") {
-                    console.log("[MSG] Skipped: status update");
+                    log("[MSG] Skipped: status update");
                     return;
                 }
 
@@ -493,7 +499,7 @@ async function startWhatsApp() {
                     msg.message?.extendedTextMessage?.text;
 
                 if (!messageText) {
-                    console.log("[MSG] Skipped: no text content. Message keys:", Object.keys(msg.message || {}));
+                    log("[MSG] Skipped: no text content. Message keys:", Object.keys(msg.message || {}));
                     return;
                 }
 
@@ -504,7 +510,7 @@ async function startWhatsApp() {
                 if (remoteJid.endsWith("@g.us")) {
                     const participant = msg.key.participant || remoteJid;
                     if (isDuplicateGroupMessage(participant, messageText)) {
-                        console.log(`[MSG] Skipped: duplicate group message from ${participant} in ${remoteJid}`);
+                        log(`[MSG] Skipped: duplicate group message from ${participant} in ${remoteJid}`);
                         return;
                     }
                 }
@@ -562,8 +568,8 @@ async function startWhatsApp() {
                 const body = JSON.stringify(payload);
                 const signature = generateSignature(body, process.env.WHATSAPP_APP_SECRET);
                 
-                console.log(`📤 Forwarding [${remoteJid}]: ${messageText}`);
-                console.log(`📤 Webhook URL: ${SEND_WEBHOOK_URL}`);
+                log(`📤 Forwarding [${remoteJid}]: ${messageText}`);
+                log(`📤 Webhook URL: ${SEND_WEBHOOK_URL}`);
 
                 if (!remoteJid.endsWith("@g.us")) {
                     await sock.sendPresenceUpdate("composing", remoteJid);
@@ -577,7 +583,7 @@ async function startWhatsApp() {
                         },
                         timeout: 10000
                     });
-                    console.log(`✅ Webhook sent OK: ${webhookRes.status}`);
+                    log(`✅ Webhook sent OK: ${webhookRes.status}`);
                 } catch (webhookErr) {
                     console.error(`❌ Webhook FAILED: ${webhookErr?.response?.status || 'no response'} - ${webhookErr?.response?.data ? JSON.stringify(webhookErr.response.data) : webhookErr?.message}`);
                 }
