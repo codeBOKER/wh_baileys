@@ -25,6 +25,7 @@ const DAILY_MSG_LIMIT_GLOBAL = parseInt(process.env.DAILY_MSG_LIMIT_GLOBAL) || 5
 const MODE = process.env.MODE || "prod";
 const IS_PROD = MODE === "prod";
 const AUTH_TABLE = `whatsapp_auth_${MODE}`;
+const SEND_MODE = process.env.SEND_MODE || "limited";
 
 // Verbose logs only outside prod; errors always print
 const log = (...args) => { if (!IS_PROD) console.log(...args); };
@@ -654,15 +655,17 @@ app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
             ? to
             : `${to}@s.whatsapp.net`;
 
-        if (!checkDailyLimits(jid)) {
-            return res.status(429).json({
-                error: {
-                    message: "Daily message limit reached. Try again tomorrow."
-                }
-            });
-        }
+        if (SEND_MODE !== "unlimited") {
+            if (!checkDailyLimits(jid)) {
+                return res.status(429).json({
+                    error: {
+                        message: "Daily message limit reached. Try again tomorrow."
+                    }
+                });
+            }
 
-        await rateLimitOutgoingMessage();
+            await rateLimitOutgoingMessage();
+        }
 
         let result;
         
@@ -679,7 +682,7 @@ app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
                 const charCount = text.body.length;
                 const typingDuration = Math.min(4000, Math.max(1000, charCount * 40));
 
-                if (!jid.endsWith("@g.us")) {
+                if (SEND_MODE !== "unlimited" && !jid.endsWith("@g.us")) {
                     await sock.sendPresenceUpdate("available", jid);
                     await sock.sendPresenceUpdate("composing", jid);
                     await new Promise(resolve => setTimeout(resolve, typingDuration));
@@ -689,7 +692,9 @@ app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
                     text: text.body
                 });
 
-                recordSentMessage(jid);
+                if (SEND_MODE !== "unlimited") {
+                    recordSentMessage(jid);
+                }
 
                 break;
             }
@@ -731,7 +736,7 @@ app.post("/v20.0/:phone_number_id/messages", async (req, res) => {
 });
 
 app.get("/", (req, res) => {
-    res.json({ status: "running", mode: MODE, environment: "huggingface-spaces" });
+    res.json({ status: "running", mode: MODE, sendMode: SEND_MODE, environment: "huggingface-spaces" });
 });
 
 app.listen(PORT, () => {
