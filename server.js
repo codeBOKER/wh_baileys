@@ -573,6 +573,7 @@ async function startWhatsApp() {
                 log(`📤 Webhook URL: ${SEND_WEBHOOK_URL}`);
 
                 if (!remoteJid.endsWith("@g.us")) {
+                    await sock.readMessages([{ remoteJid, id: msg.key.id }]);
                     await sock.sendPresenceUpdate("composing", remoteJid);
                 }
 
@@ -588,10 +589,7 @@ async function startWhatsApp() {
                 } catch (webhookErr) {
                     console.error(`❌ Webhook FAILED: ${webhookErr?.response?.status || 'no response'} - ${webhookErr?.response?.data ? JSON.stringify(webhookErr.response.data) : webhookErr?.message}`);
                 }
-                
-                if (!remoteJid.endsWith("@g.us")) {
-                    await sock.sendPresenceUpdate("paused", remoteJid);
-                }
+
                 
                 // ─── User registration runs in background (non-blocking) ───
                 if (!remoteJid.endsWith("@g.us")) {
